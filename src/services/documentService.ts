@@ -4,6 +4,32 @@ import { supabase } from '@/lib/supabaseClient'
 const BUCKET_NAME = 'documents'
 
 class DocumentService {
+  private bucketInitialized = false
+
+  /**
+   * Ensure the bucket exists - creates it if necessary
+   */
+  private async ensureBucket(): Promise<void> {
+    if (this.bucketInitialized) return
+
+    try {
+      const { data: buckets } = await supabase.storage.listBuckets()
+      const exists = buckets?.some(b => b.name === BUCKET_NAME)
+
+      if (!exists) {
+        const { error } = await supabase.storage.createBucket(BUCKET_NAME, {
+          public: true,
+        })
+        if (error && !error.message.includes('already exists')) {
+          console.warn('Could not create bucket:', error.message)
+        }
+      }
+      this.bucketInitialized = true
+    } catch (error) {
+      console.error('Error checking/creating bucket:', error)
+      this.bucketInitialized = true
+    }
+  }
   /**
    * Get all documents
    */
@@ -103,6 +129,7 @@ class DocumentService {
     }
 
     try {
+      await this.ensureBucket()
       const fileName = `${productType}/${Date.now()}-${Math.random().toString(36).substr(2, 9)}-${file.name}`
 
       if (onProgress) onProgress(25)
@@ -137,10 +164,14 @@ class DocumentService {
           required: false,
         })
         .select()
-        .single()
+        .maybeSingle()
 
       if (insertError) {
         throw insertError
+      }
+
+      if (!docData) {
+        throw new Error('Failed to create document record')
       }
 
       if (onProgress) onProgress(100)
